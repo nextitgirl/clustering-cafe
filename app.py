@@ -13,7 +13,7 @@ st.markdown(
     <div style='text-align: center; padding: 25px; background-color: #f8f9fa; border-radius: 15px; border: 2px solid #4CAF50;'>
         <h1 style='color: #1b5e20; font-size: 2.1em;'>Rancang Bangun Aplikasi Clustering Penjualan Makanan dan Minuman Menggunakan Algoritma K-Means</h1>
         <hr style='border: 1px solid #4CAF50; width: 80%;'>
-        <p style='font-size: 1.1em; color: #555;'>Silakan masukkan data penjualan Anda. Pastikan data yang Anda unggah memiliki kolom Produk, Jumlah, dan Harga.</p>
+        <p style='font-size: 1.1em; color: #555;'>Solusi cerdas untuk analisis strategi penjualan UMKM.</p>
     </div>
     <br>
     """,
@@ -26,109 +26,86 @@ uploaded_file = st.sidebar.file_uploader("Unggah File Rekap Penjualan (CSV)", ty
 
 if uploaded_file is not None:
     try:
-        # Deteksi separator secara otomatis (Koma atau Titik Koma)
-        raw_bytes = uploaded_file.read()
-        uploaded_file.seek(0)
-        content = raw_bytes.decode('utf-8', errors='ignore')
+        # STEP 1: Deteksi Pemisah (Koma atau Titik Koma) secara otomatis
+        content = uploaded_file.getvalue().decode('utf-8', errors='ignore')
         sep = ';' if content.count(';') > content.count(',') else ','
-        
-        # Scan data untuk mencari baris header yang mengandung keyword
-        raw_df = pd.read_csv(uploaded_file, sep=sep, header=None, engine='python').astype(str)
-        target_row = None
-        keywords = ['PRODUK', 'ITEM', 'BARANG', 'NAMA', 'JUMLAH', 'QTY', 'QUANTITY', 'HARGA', 'PRICE']
-        
-        for i, row in raw_df.iterrows():
-            row_text = " ".join(row.values).upper()
-            if any(key in row_text for key in keywords):
-                target_row = i
-                break
-        
-        # Baca ulang file mulai dari baris header yang ditemukan
         uploaded_file.seek(0)
-        df = pd.read_csv(uploaded_file, sep=sep, skiprows=target_row if target_row is not None else 0, engine='python')
         
-        # Bersihkan nama kolom (Huruf besar, hapus spasi, hapus simbol)
-        df.columns = df.columns.str.strip().str.upper().str.replace(r'[^A-Z0-9]', '', regex=True)
+        # STEP 2: Baca semua data sebagai string dulu untuk dibersihkan
+        df_raw = pd.read_csv(uploaded_file, sep=sep, engine='python').astype(str)
         
-        # --- LOGIKA PEMETAAN KOLOM CERDAS ---
-        col_map = {}
-        logics = {
-            'PRODUK': ['PRODUK', 'ITEM', 'BARANG', 'NAMA', 'MENU', 'DESKRIPSI'],
-            'JUMLAH': ['JUMLAH', 'QTY', 'QUANTITY', 'TERJUAL', 'UNIT', 'VOL', 'JML'],
-            'HARGA': ['HARGA', 'PRICE', 'NILAI', 'TOTAL', 'HARG', 'PRC']
-        }
+        # STEP 3: Bersihkan nama kolom (Hapus spasi, jadikan huruf besar semua)
+        # Ini agar "Produk", "produk ", dan "PRODUK" dibaca sama oleh sistem
+        df_raw.columns = df_raw.columns.str.strip().str.upper()
         
-        for key, synonyms in logics.items():
-            for c in df.columns:
-                if any(syn in c for syn in synonyms):
-                    col_map[key] = c
-                    break
+        # STEP 4: Cari kolom menggunakan kata kunci (Fuzzy Matching)
+        col_p = next((c for c in df_raw.columns if any(k in c for k in ['PRODUK', 'ITEM', 'BARANG', 'NAMA', 'MENU'])), None)
+        col_j = next((c for c in df_raw.columns if any(k in c for k in ['JUMLAH', 'QTY', 'QUANTITY', 'TERJUAL', 'UNIT', 'JML'])), None)
+        col_h = next((c for c in df_raw.columns if any(k in c for k in ['HARGA', 'PRICE', 'NILAI', 'TOTAL', 'HARG'])), None)
 
-        # Cek apakah 3 kolom inti ditemukan
-        if len(col_map) >= 3:
-            df_final = df[[col_map['PRODUK'], col_map['JUMLAH'], col_map['HARGA']]].copy()
-            df_final.columns = ['PRODUK', 'JUMLAH', 'HARGA']
+        if col_p and col_j and col_h:
+            # Ambil datanya
+            df = df_raw[[col_p, col_j, col_h]].copy()
+            df.columns = ['PRODUK', 'JUMLAH', 'HARGA']
             
-            # Bersihkan angka dari simbol (Rp, titik ribuan, koma desimal)
+            # STEP 5: Bersihkan data angka (Hapus Rp, titik ribuan, spasi, dsb)
             for col in ['JUMLAH', 'HARGA']:
-                # Hapus semua kecuali angka dan titik
-                df_final[col] = df_final[col].astype(str).str.replace(r'[^\d.]', '', regex=True)
-                df_final[col] = pd.to_numeric(df_final[col], errors='coerce')
+                # Menghapus apapun yang bukan angka (0-9)
+                df[col] = df[col].str.replace(r'[^\d]', '', regex=True)
+                df[col] = pd.to_numeric(df[col], errors='coerce')
             
-            df_final = df_final.dropna(subset=['JUMLAH', 'HARGA'])
+            # Buang baris yang kosong setelah dibersihkan
+            df = df.dropna()
 
-            if not df_final.empty:
-                # --- 3. PROSES K-MEANS ---
+            if not df.empty:
                 st.sidebar.markdown("---")
                 n_clusters = st.sidebar.slider("Tentukan Jumlah Cluster (K)", 2, 5, 3)
 
-                X = df_final[['JUMLAH', 'HARGA']]
+                # --- 3. PROSES K-MEANS ---
+                X = df[['JUMLAH', 'HARGA']]
                 scaler = StandardScaler()
                 X_scaled = scaler.fit_transform(X)
 
                 kmeans = KMeans(n_clusters=n_clusters, init='k-means++', random_state=42, n_init=10).fit(X_scaled)
-                df_final['Cluster'] = kmeans.labels_
+                df['Cluster'] = kmeans.labels_
 
                 # --- 4. OUTPUT HASIL ---
-                st.success(f"✅ Analisis Berhasil: Memproses {len(df_final)} baris data.")
+                st.success(f"✅ Sistem berhasil mengenali kolom: **{col_p}**, **{col_j}**, dan **{col_h}**.")
                 
-                tab1, tab2 = st.tabs(["📈 Visualisasi Grafik", "📄 Tabel Data"])
+                tab1, tab2 = st.tabs(["📈 Visualisasi Cluster", "📄 Tabel Data"])
                 
                 with tab1:
                     fig, ax = plt.subplots(figsize=(10, 5))
-                    sns.scatterplot(data=df_final, x='JUMLAH', y='HARGA', hue='Cluster', palette='viridis', s=200, ax=ax, style='Cluster')
-                    plt.title(f"Visualisasi Clustering (K-Means)")
+                    sns.scatterplot(data=df, x='JUMLAH', y='HARGA', hue='Cluster', palette='viridis', s=200, ax=ax, style='Cluster')
+                    plt.title("Hasil Pengelompokan Penjualan")
                     st.pyplot(fig)
                 
                 with tab2:
-                    st.dataframe(df_final, use_container_width=True)
+                    st.dataframe(df, use_container_width=True)
 
-                # --- 5. KESIMPULAN STRATEGIS ---
+                # --- 5. KESIMPULAN ---
                 st.markdown("---")
-                st.subheader("💡 Hasil Analisis Berdasarkan Kelompok (Cluster)")
+                st.subheader("💡 Kesimpulan Hasil Clustering")
                 
-                cluster_sum = df_final.groupby('Cluster')['JUMLAH'].mean().sort_values(ascending=False)
-                id_laris = cluster_sum.index[0]
-                id_kurang = cluster_sum.index[-1]
+                # Cari cluster terlaris berdasarkan rata-rata jumlah
+                avg_sales = df.groupby('Cluster')['JUMLAH'].mean().sort_values(ascending=False)
+                id_laris = avg_sales.index[0]
+                id_kurang = avg_sales.index[-1]
                 
                 c1, c2 = st.columns(2)
                 with c1:
-                    st.success(f"### 🌟 Cluster Produk Terlaris")
-                    st.write("Produk-produk ini memiliki volume penjualan paling tinggi (Bintang):")
-                    st.write(df_final[df_final['Cluster'] == id_laris]['PRODUK'].unique()[:15])
+                    st.success("### 🌟 Cluster Terlaris")
+                    st.write(df[df['Cluster'] == id_laris]['PRODUK'].unique()[:10])
                 with c2:
-                    st.warning(f"### 📉 Cluster Produk Perlu Promo")
-                    st.write("Produk-produk ini memiliki volume penjualan rendah (Evaluasi):")
-                    st.write(df_final[df_final['Cluster'] == id_kurang]['PRODUK'].unique()[:15])
-                
-                st.info(f"Metode: Euclidean Distance. Cluster Terlaris memiliki rata-rata penjualan {cluster_sum.iloc[0]:.1f} unit.")
+                    st.warning("### 📉 Cluster Perlu Promo")
+                    st.write(df[df['Cluster'] == id_kurang]['PRODUK'].unique()[:10])
             else:
-                st.error("Gagal memproses angka. Pastikan kolom Jumlah dan Harga berisi data numerik.")
+                st.error("Data ditemukan, tapi kolom jumlah/harga tidak berisi angka yang benar.")
         else:
-            st.error("Kolom Produk, Jumlah, atau Harga tidak ditemukan.")
-            st.info(f"Kolom yang terdeteksi: {list(df.columns)}")
+            st.error("Sistem gagal menemukan kolom Produk, Jumlah, atau Harga.")
+            st.info(f"Kolom yang terdeteksi di file Anda: {list(df_raw.columns)}")
             
     except Exception as e:
-        st.error(f"Terjadi kesalahan saat membaca file: {e}")
+        st.error(f"Terjadi kesalahan: {e}")
 else:
-    st.info("👋 Selamat Datang. Silakan unggah file CSV data penjualan Anda di sidebar sebelah kiri.")
+    st.info("👋 Silakan unggah file CSV data penjualan Anda untuk memulai.")
