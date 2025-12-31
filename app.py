@@ -5,84 +5,57 @@ import seaborn as sns
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 
-# 1. Pengaturan Tampilan
 st.set_page_config(page_title="Analisis Clustering Cafe", layout="wide")
-
 st.markdown("<h1 style='text-align: center;'>📊 Sistem Clustering Penjualan Cafe</h1>", unsafe_allow_html=True)
-st.markdown("---")
 
-# 2. Sidebar untuk Upload
-st.sidebar.header("Konfigurasi")
 uploaded_file = st.sidebar.file_uploader("Upload File CSV Rekap Penjualan", type=["csv"])
 
 if uploaded_file is not None:
     try:
-        # Membaca file tanpa skip baris (agar judul kolom terbaca)
-        df = pd.read_csv(uploaded_file)
+        # 1. Baca file (otomatis deteksi pemisah koma atau titik koma)
+        df = pd.read_csv(uploaded_file, sep=None, engine='python')
         
-        # --- PROSES PEMBERSIHAN DATA (Agar Tak Error) ---
-        # Hapus baris yang benar-benar kosong
-        df = df.dropna(how='all')
+        # 2. PROSES OTOMATIS: Ubah semua nama kolom jadi HURUF BESAR agar seragam
+        # Ini fungsinya supaya mau input 'produk' atau 'PRODUK' tetap terbaca
+        df.columns = df.columns.str.strip().str.upper()
         
-        # Bersihkan kolom JUMLAH dan HARGA dari simbol Rp, titik, atau spasi
-        for col in ['JUMLAH', 'HARGA']:
-            if col in df.columns:
+        # 3. Cek apakah kolom yang dibutuhkan ada (setelah diseragamkan ke huruf besar)
+        if 'JUMLAH' in df.columns and 'HARGA' in df.columns:
+            
+            # 4. Bersihkan data angka (hapus Rp, titik ribuan, dll)
+            for col in ['JUMLAH', 'HARGA']:
                 if df[col].dtype == 'object':
-                    df[col] = df[col].str.replace('Rp', '', regex=False)
-                    df[col] = df[col].str.replace('.', '', regex=False)
-                    df[col] = df[col].str.replace(',', '', regex=False)
-                    df[col] = df[col].str.strip()
-                
-                # Ubah jadi angka, jika gagal ubah jadi NaN
+                    df[col] = df[col].str.replace('Rp', '', regex=False).str.replace('.', '', regex=False).str.replace(',', '', regex=False).str.strip()
                 df[col] = pd.to_numeric(df[col], errors='coerce')
-
-        # Hapus baris yang kolom angka-nya rusak (NaN)
-        df = df.dropna(subset=['JUMLAH', 'HARGA'])
-        
-        if not df.empty:
-            # Tampilkan data awal
-            st.subheader("✅ Data Berhasil Dimuat")
-            st.write(f"Total data yang valid: {len(df)} baris")
-            st.dataframe(df.head(10), use_container_width=True)
-
-            # --- PROSES K-MEANS ---
-            X = df[['JUMLAH', 'HARGA']]
             
-            # Standarisasi data
-            scaler = StandardScaler()
-            X_scaled = scaler.fit_transform(X)
+            # Hapus baris yang datanya kosong atau rusak
+            df = df.dropna(subset=['JUMLAH', 'HARGA'])
 
-            # Menjalankan K-Means dengan 3 Cluster
-            kmeans = KMeans(n_clusters=3, init='k-means++', random_state=42)
-            df['Cluster'] = kmeans.fit_predict(X_scaled)
+            if not df.empty:
+                st.subheader("✅ Data Berhasil Dimuat")
+                st.dataframe(df.head(), use_container_width=True)
 
-            # --- VISUALISASI ---
-            st.markdown("---")
-            st.subheader("📈 Hasil Clustering Penjualan")
-            
-            fig, ax = plt.subplots(figsize=(10, 6))
-            sns.scatterplot(
-                data=df, x='JUMLAH', y='HARGA', 
-                hue='Cluster', palette='bright', 
-                s=150, style='Cluster', ax=ax
-            )
-            
-            plt.title("Pengelompokan Produk Berdasarkan Jumlah & Harga")
-            plt.xlabel("Jumlah Terjual")
-            plt.ylabel("Harga Produk")
-            st.pyplot(fig)
+                # 5. Proses K-Means
+                X = df[['JUMLAH', 'HARGA']]
+                scaler = StandardScaler()
+                X_scaled = scaler.fit_transform(X)
 
-            # Tampilkan Tabel Hasil
-            st.subheader("📄 Detail Hasil Cluster")
-            st.dataframe(df, use_container_width=True)
-            
-            st.success("Analisis selesai! Data telah dikelompokkan ke dalam 3 cluster.")
-            
+                kmeans = KMeans(n_clusters=3, random_state=42)
+                df['Cluster'] = kmeans.fit_predict(X_scaled)
+
+                # 6. Grafik
+                st.subheader("📈 Hasil Clustering")
+                fig, ax = plt.subplots(figsize=(10, 6))
+                sns.scatterplot(data=df, x='JUMLAH', y='HARGA', hue='Cluster', palette='bright', s=150, ax=ax)
+                st.pyplot(fig)
+                st.success("Analisis Berhasil! Grafik sudah muncul di atas.")
+            else:
+                st.error("Data tidak mengandung angka yang valid untuk dihitung.")
         else:
-            st.error("Error: Data kosong setelah dibersihkan. Pastikan kolom JUMLAH dan HARGA berisi angka.")
+            # Jika kolom tidak ditemukan, beri tahu user kolom apa saja yang terdeteksi
+            st.error(f"Kolom 'JUMLAH' atau 'HARGA' tidak ditemukan.")
+            st.warning(f"Kolom yang terdeteksi di file kamu: {list(df.columns)}")
+            st.info("Saran: Pastikan judul kolom di Excel kamu adalah PRODUK, JUMLAH, dan HARGA.")
 
     except Exception as e:
-        st.error(f"Terjadi kesalahan teknis: {e}")
-        st.info("Pastikan file CSV memiliki kolom: PRODUK, JUMLAH, HARGA")
-else:
-    st.info("👋 Silakan upload file CSV melalui menu di sebelah kiri untuk memulai.")
+        st.error(f"Terjadi kesalahan saat membaca file: {e}")
