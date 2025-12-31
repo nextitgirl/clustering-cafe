@@ -5,35 +5,84 @@ import seaborn as sns
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 
-st.set_page_config(page_title="Data Mining Cafe Bumbum", layout="wide")
-st.title("📊 Sistem Clustering Penjualan Cafe")
+# 1. Pengaturan Tampilan
+st.set_page_config(page_title="Analisis Clustering Cafe", layout="wide")
 
-uploaded_file = st.sidebar.file_uploader("Upload File Rekap Penjualan (CSV)", type=["csv"])
+st.markdown("<h1 style='text-align: center;'>📊 Sistem Clustering Penjualan Cafe</h1>", unsafe_allow_html=True)
+st.markdown("---")
+
+# 2. Sidebar untuk Upload
+st.sidebar.header("Konfigurasi")
+uploaded_file = st.sidebar.file_uploader("Upload File CSV Rekap Penjualan", type=["csv"])
 
 if uploaded_file is not None:
-    # Membaca data tanpa skip baris
-    df = pd.read_csv(uploaded_file)
-    
-    # Bersihkan data: hapus baris kosong & pastikan angka valid
-    df = df.dropna()
-    df['JUMLAH'] = pd.to_numeric(df['JUMLAH'], errors='coerce')
-    df['HARGA'] = pd.to_numeric(df['HARGA'], errors='coerce')
-    df = df.dropna(subset=['JUMLAH', 'HARGA'])
+    try:
+        # Membaca file tanpa skip baris (agar judul kolom terbaca)
+        df = pd.read_csv(uploaded_file)
+        
+        # --- PROSES PEMBERSIHAN DATA (Agar Tak Error) ---
+        # Hapus baris yang benar-benar kosong
+        df = df.dropna(how='all')
+        
+        # Bersihkan kolom JUMLAH dan HARGA dari simbol Rp, titik, atau spasi
+        for col in ['JUMLAH', 'HARGA']:
+            if col in df.columns:
+                if df[col].dtype == 'object':
+                    df[col] = df[col].str.replace('Rp', '', regex=False)
+                    df[col] = df[col].str.replace('.', '', regex=False)
+                    df[col] = df[col].str.replace(',', '', regex=False)
+                    df[col] = df[col].str.strip()
+                
+                # Ubah jadi angka, jika gagal ubah jadi NaN
+                df[col] = pd.to_numeric(df[col], errors='coerce')
 
-    st.write("### Data Terdeteksi", df.head())
+        # Hapus baris yang kolom angka-nya rusak (NaN)
+        df = df.dropna(subset=['JUMLAH', 'HARGA'])
+        
+        if not df.empty:
+            # Tampilkan data awal
+            st.subheader("✅ Data Berhasil Dimuat")
+            st.write(f"Total data yang valid: {len(df)} baris")
+            st.dataframe(df.head(10), use_container_width=True)
 
-    # Proses K-Means
-    X = df[['JUMLAH', 'HARGA']]
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
+            # --- PROSES K-MEANS ---
+            X = df[['JUMLAH', 'HARGA']]
+            
+            # Standarisasi data
+            scaler = StandardScaler()
+            X_scaled = scaler.fit_transform(X)
 
-    kmeans = KMeans(n_clusters=3, random_state=42)
-    df['Cluster'] = kmeans.fit_predict(X_scaled)
+            # Menjalankan K-Means dengan 3 Cluster
+            kmeans = KMeans(n_clusters=3, init='k-means++', random_state=42)
+            df['Cluster'] = kmeans.fit_predict(X_scaled)
 
-    # Visualisasi
-    st.write("### Grafik Hasil Clustering")
-    fig, ax = plt.subplots(figsize=(10, 6))
-    sns.scatterplot(data=df, x='JUMLAH', y='HARGA', hue='Cluster', palette='viridis', s=100, ax=ax)
-    st.pyplot(fig)
-    
-    st.success("Analisis Selesai!")
+            # --- VISUALISASI ---
+            st.markdown("---")
+            st.subheader("📈 Hasil Clustering Penjualan")
+            
+            fig, ax = plt.subplots(figsize=(10, 6))
+            sns.scatterplot(
+                data=df, x='JUMLAH', y='HARGA', 
+                hue='Cluster', palette='bright', 
+                s=150, style='Cluster', ax=ax
+            )
+            
+            plt.title("Pengelompokan Produk Berdasarkan Jumlah & Harga")
+            plt.xlabel("Jumlah Terjual")
+            plt.ylabel("Harga Produk")
+            st.pyplot(fig)
+
+            # Tampilkan Tabel Hasil
+            st.subheader("📄 Detail Hasil Cluster")
+            st.dataframe(df, use_container_width=True)
+            
+            st.success("Analisis selesai! Data telah dikelompokkan ke dalam 3 cluster.")
+            
+        else:
+            st.error("Error: Data kosong setelah dibersihkan. Pastikan kolom JUMLAH dan HARGA berisi angka.")
+
+    except Exception as e:
+        st.error(f"Terjadi kesalahan teknis: {e}")
+        st.info("Pastikan file CSV memiliki kolom: PRODUK, JUMLAH, HARGA")
+else:
+    st.info("👋 Silakan upload file CSV melalui menu di sebelah kiri untuk memulai.")
