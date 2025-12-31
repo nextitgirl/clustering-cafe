@@ -29,8 +29,7 @@ if uploaded_file is not None:
         separator = ';' if content.count(';') > content.count(',') else ','
         uploaded_file.seek(0)
         
-        # 2. BACA DATA DENGAN DEEP SCAN (Mencari judul kolom yang benar)
-        # Kami membaca data tanpa header dulu untuk mencari di mana judul asli berada
+        # 2. BACA DATA DENGAN DEEP SCAN
         raw_df = pd.read_csv(uploaded_file, sep=separator, header=None, engine='python').astype(str)
         
         target_row = None
@@ -43,7 +42,6 @@ if uploaded_file is not None:
                 break
         
         if target_row is not None:
-            # Baca ulang mulai dari baris yang ditemukan
             uploaded_file.seek(0)
             df = pd.read_csv(uploaded_file, sep=separator, skiprows=target_row, engine='python')
             df.columns = df.columns.str.strip().str.upper()
@@ -74,27 +72,66 @@ if uploaded_file is not None:
                 df_final = df_final.dropna()
 
                 if not df_final.empty:
-                    st.success(f"✅ Data Terdeteksi di baris ke-{target_row+1}")
-                    st.dataframe(df_final.head(), use_container_width=True)
+                    # --- FITUR SLIDER K ---
+                    st.sidebar.markdown("---")
+                    st.sidebar.subheader("Pengaturan Kelompok")
+                    n_clusters = st.sidebar.slider("Pilih Jumlah Kelompok (K)", 2, 5, 3)
 
                     # --- K-MEANS ---
                     X = df_final[['JUMLAH', 'HARGA']]
                     X_scaled = StandardScaler().fit_transform(X)
-                    kmeans = KMeans(n_clusters=3, random_state=42).fit(X_scaled)
+                    kmeans = KMeans(n_clusters=n_clusters, init='k-means++', random_state=42, n_init=10).fit(X_scaled)
                     df_final['Kelompok'] = kmeans.labels_
 
                     # --- VISUALISASI ---
                     st.markdown("---")
+                    st.subheader("📈 Peta Kelompok Penjualan")
                     fig, ax = plt.subplots(figsize=(10, 5))
-                    sns.scatterplot(data=df_final, x='JUMLAH', y='HARGA', hue='Kelompok', palette='viridis', s=200, ax=ax)
+                    sns.scatterplot(data=df_final, x='JUMLAH', y='HARGA', hue='Kelompok', palette='viridis', s=200, ax=ax, style='Kelompok')
+                    plt.title(f"Persebaran Produk dalam {n_clusters} Kelompok")
                     st.pyplot(fig)
-                    st.success("Analisis Selesai!")
+                    
+                    # --- TABEL DATA ---
+                    st.subheader("📄 Tabel Hasil Analisis")
+                    st.dataframe(df_final, use_container_width=True)
+
+                    # --- FITUR BARU: KESIMPULAN OTOMATIS ---
+                    st.markdown("---")
+                    st.subheader("💡 Kesimpulan Strategis")
+                    
+                    # Hitung rata-rata jumlah terjual per kelompok
+                    cluster_summary = df_final.groupby('Kelompok')['JUMLAH'].mean().sort_values(ascending=False)
+                    
+                    # Kelompok Terlaris (Rata-rata penjualan tertinggi)
+                    id_laris = cluster_summary.index[0]
+                    produk_laris = df_final[df_final['Kelompok'] == id_laris]['PRODUK'].unique()
+                    
+                    # Kelompok Kurang Laku (Rata-rata penjualan terendah)
+                    id_kurang = cluster_summary.index[-1]
+                    produk_kurang = df_final[df_final['Kelompok'] == id_kurang]['PRODUK'].unique()
+
+                    c1, c2 = st.columns(2)
+                    
+                    with c1:
+                        st.success(f"### 🌟 Produk Paling Laku (Kelompok {id_laris+1})")
+                        st.write("Produk ini memiliki minat yang sangat tinggi. Pastikan stok selalu tersedia!")
+                        for p in produk_laris[:10]: # Tampilkan max 10 produk
+                            st.write(f"- {p}")
+                    
+                    with c2:
+                        st.warning(f"### 📉 Produk Kurang Laku (Kelompok {id_kurang+1})")
+                        st.write("Produk ini penjualannya masih rendah. Pertimbangkan untuk memberikan promo atau evaluasi harga.")
+                        for p in produk_kurang[:10]: # Tampilkan max 10 produk
+                            st.write(f"- {p}")
+                    
+                    st.info("Catatan: Kesimpulan ini diambil berdasarkan rata-rata jumlah produk yang terjual dalam satu bulan.")
+
                 else:
                     st.error("Data ditemukan tapi isinya bukan angka yang valid.")
             else:
-                st.error("Gagal memetakan kolom Produk, Jumlah, dan Harga.")
+                st.error("Gagal memetakan kolom. Pastikan ada judul PRODUK, JUMLAH, dan HARGA.")
         else:
-            st.error("Sistem tidak menemukan baris yang berisi judul kolom (Produk, Jumlah, Harga).")
+            st.error("Sistem tidak menemukan baris judul kolom.")
             
     except Exception as e:
         st.error(f"Terjadi kesalahan: {e}")
