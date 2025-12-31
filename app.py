@@ -5,7 +5,7 @@ import seaborn as sns
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 
-# --- TAMPILAN UTAMA ---
+# --- TAMPILAN ---
 st.set_page_config(page_title="Analisis Penjualan UMKM", layout="wide")
 
 st.markdown(
@@ -20,112 +20,83 @@ st.markdown(
 )
 
 st.sidebar.header("📁 Unggah Data Anda")
-st.sidebar.info("Gunakan file CSV hasil ekspor dari Excel atau aplikasi kasir Anda.")
 uploaded_file = st.sidebar.file_uploader("Pilih file CSV", type=["csv"])
 
 if uploaded_file is not None:
     try:
-        # 1. DETEKSI PEMISAH (Koma atau Titik Koma)
+        # 1. DETEKSI PEMISAH
         content = uploaded_file.getvalue().decode('utf-8', errors='ignore')
         separator = ';' if content.count(';') > content.count(',') else ','
         uploaded_file.seek(0)
         
-        df = pd.read_csv(uploaded_file, sep=separator, engine='python')
+        # 2. BACA DATA DENGAN DEEP SCAN (Mencari judul kolom yang benar)
+        # Kami membaca data tanpa header dulu untuk mencari di mana judul asli berada
+        raw_df = pd.read_csv(uploaded_file, sep=separator, header=None, engine='python').astype(str)
         
-        # 2. NORMALISASI NAMA KOLOM (Hapus spasi, jadikan huruf besar)
-        df.columns = df.columns.str.strip().str.upper()
+        target_row = None
+        keywords = ['PRODUK', 'ITEM', 'BARANG', 'JUMLAH', 'QTY', 'HARGA', 'PRICE']
         
-        # 3. LOGIKA CERDAS MENCARI KOLOM
-        # Sistem akan mencari kata yang mirip-mirip
-        keywords = {
-            'PRODUK': ['PRODUK', 'ITEM', 'BARANG', 'NAMA', 'MENU', 'DESKRIPSI'],
-            'JUMLAH': ['JUMLAH', 'QTY', 'QUANTITY', 'TERJUAL', 'UNIT', 'VOL'],
-            'HARGA': ['HARGA', 'PRICE', 'NILAI', 'TOTAL', 'OMZET', 'SALES']
-        }
-
-        found_cols = {}
-        for key, synonyms in keywords.items():
-            for col in df.columns:
-                if any(syn in col for syn in synonyms):
-                    found_cols[key] = col
-                    break
-
-        # 4. EKSEKUSI JIKA KOLOM DITEMUKAN
-        if len(found_cols) >= 3:
-            # Gunakan kolom yang ditemukan
-            df_final = df[[found_cols['PRODUK'], found_cols['JUMLAH'], found_cols['HARGA']]].copy()
-            df_final.columns = ['PRODUK', 'JUMLAH', 'HARGA']
+        for i, row in raw_df.iterrows():
+            row_str = " ".join(row.values).upper()
+            if any(key in row_str for key in keywords):
+                target_row = i
+                break
+        
+        if target_row is not None:
+            # Baca ulang mulai dari baris yang ditemukan
+            uploaded_file.seek(0)
+            df = pd.read_csv(uploaded_file, sep=separator, skiprows=target_row, engine='python')
+            df.columns = df.columns.str.strip().str.upper()
             
-            # 5. PEMBERSIHAN DATA ANGKA (Anti-Error Karakter Aneh)
-            for col in ['JUMLAH', 'HARGA']:
-                # Hapus semua yang bukan angka/titik (seperti Rp, spasi, dll)
-                df_final[col] = df_final[col].astype(str).str.replace(r'[^\d.]', '', regex=True)
-                df_final[col] = pd.to_numeric(df_final[col], errors='coerce')
+            # Mapping Kolom Otomatis
+            col_map = {}
+            mapping_logic = {
+                'PRODUK': ['PRODUK', 'ITEM', 'BARANG', 'NAMA'],
+                'JUMLAH': ['JUMLAH', 'QTY', 'QUANTITY', 'TERJUAL', 'UNIT'],
+                'HARGA': ['HARGA', 'PRICE', 'NILAI', 'TOTAL']
+            }
+            
+            for key, syns in mapping_logic.items():
+                for c in df.columns:
+                    if any(s in c for s in syns):
+                        col_map[key] = c
+                        break
 
-            df_final = df_final.dropna()
-
-            if not df_final.empty:
-                st.success(f"✅ Berhasil mengenali kolom: {found_cols['PRODUK']}, {found_cols['JUMLAH']}, & {found_cols['HARGA']}")
+            if len(col_map) >= 3:
+                df_final = df[[col_map['PRODUK'], col_map['JUMLAH'], col_map['HARGA']]].copy()
+                df_final.columns = ['PRODUK', 'JUMLAH', 'HARGA']
                 
-                with st.expander("🔍 Lihat Data Terdeteksi"):
-                    st.dataframe(df_final.head(10), use_container_width=True)
-
-                # 6. ANALISIS CLUSTERING (K-MEANS)
-                X = df_final[['JUMLAH', 'HARGA']]
-                scaler = StandardScaler()
-                X_scaled = scaler.fit_transform(X)
-
-                kmeans = KMeans(n_clusters=3, init='k-means++', random_state=42)
-                df_final['Kelompok'] = kmeans.fit_predict(X_scaled)
-
-                # 7. VISUALISASI AESTHETIC
-                st.markdown("---")
-                st.subheader("📈 Peta Kelompok Penjualan Produk")
+                # Pembersihan angka
+                for col in ['JUMLAH', 'HARGA']:
+                    df_final[col] = df_final[col].astype(str).str.replace(r'[^\d.]', '', regex=True)
+                    df_final[col] = pd.to_numeric(df_final[col], errors='coerce')
                 
-                fig, ax = plt.subplots(figsize=(10, 5))
-                sns.scatterplot(
-                    data=df_final, x='JUMLAH', y='HARGA', 
-                    hue='Kelompok', palette='viridis', s=200, ax=ax, style='Kelompok'
-                )
-                plt.title("Perbandingan Jumlah Terjual vs Harga")
-                st.pyplot(fig)
+                df_final = df_final.dropna()
 
-                # 8. KESIMPULAN SEDERHANA UNTUK PEMILIK USAHA
-                st.subheader("💡 Tips Strategi Usaha")
-                col1, col2, col3 = st.columns(3)
-                
-                # Cari kelompok mana yang paling laku (Rata-rata jumlah tertinggi)
-                top_group = df_final.groupby('Kelompok')['JUMLAH'].mean().idxmax()
-                
-                with col1:
-                    st.info("**Kelompok Terlaris**")
-                    st.write(df_final[df_final['Kelompok'] == top_group]['PRODUK'].head(5).values)
-                
-                with col2:
-                    st.warning("**Perlu Promo**")
-                    low_group = df_final.groupby('Kelompok')['JUMLAH'].mean().idxmin()
-                    st.write(df_final[df_final['Kelompok'] == low_group]['PRODUK'].head(5).values)
-                
-                with col3:
-                    st.success("**Produk Premium**")
-                    high_price = df_final.groupby('Kelompok')['HARGA'].mean().idxmax()
-                    st.write(df_final[df_final['Kelompok'] == high_price]['PRODUK'].head(5).values)
+                if not df_final.empty:
+                    st.success(f"✅ Data Terdeteksi di baris ke-{target_row+1}")
+                    st.dataframe(df_final.head(), use_container_width=True)
 
+                    # --- K-MEANS ---
+                    X = df_final[['JUMLAH', 'HARGA']]
+                    X_scaled = StandardScaler().fit_transform(X)
+                    kmeans = KMeans(n_clusters=3, random_state=42).fit(X_scaled)
+                    df_final['Kelompok'] = kmeans.labels_
+
+                    # --- VISUALISASI ---
+                    st.markdown("---")
+                    fig, ax = plt.subplots(figsize=(10, 5))
+                    sns.scatterplot(data=df_final, x='JUMLAH', y='HARGA', hue='Kelompok', palette='viridis', s=200, ax=ax)
+                    st.pyplot(fig)
+                    st.success("Analisis Selesai!")
+                else:
+                    st.error("Data ditemukan tapi isinya bukan angka yang valid.")
             else:
-                st.error("Data terdeteksi, tapi tidak ada angka yang bisa diolah. Pastikan kolom Jumlah dan Harga berisi angka.")
+                st.error("Gagal memetakan kolom Produk, Jumlah, dan Harga.")
         else:
-            st.error("Gagal mendeteksi kolom secara otomatis.")
-            st.info(f"Kolom yang ada di file Anda: {list(df.columns)}")
-            st.markdown("**Saran:** Pastikan file Anda punya judul kolom seperti 'Produk', 'Jumlah', dan 'Harga'.")
-
+            st.error("Sistem tidak menemukan baris yang berisi judul kolom (Produk, Jumlah, Harga).")
+            
     except Exception as e:
         st.error(f"Terjadi kesalahan: {e}")
 else:
-    st.markdown(
-        """
-        <div style='text-align: center; margin-top: 50px;'>
-            <p style='color: #666;'>👋 Halo! Silakan unggah rekap penjualan bulanan Anda (format .CSV) pada menu di samping kiri.</p>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+    st.info("👋 Silakan unggah file CSV Anda.")
